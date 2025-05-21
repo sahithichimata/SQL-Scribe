@@ -8,108 +8,178 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Upload, Database, PlusCircle, RefreshCcw, FolderOpen, List, X } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { useToast } from "@/hooks/use-toast"
+import { CodeHighlight } from "@/components/ui/code-highlight"
+
+interface Column {
+  name: string
+  type: string
+  description?: string
+  isPrimary?: boolean
+  isForeign?: boolean
+  references?: {
+    table: string
+    column: string
+  }
+}
 
 interface Table {
   name: string
-  columns: { name: string; type: string; description?: string }[]
+  columns: Column[]
+  sampleData?: any[]
 }
 
 interface Schema {
   name: string
   tables: Table[]
+  relations: Array<{
+    from: { table: string; column: string }
+    to: { table: string; column: string }
+  }>
 }
 
-// Sample schema data
-const sampleSchema: Schema = {
-  name: "E-commerce Database",
-  tables: [
-    {
-      name: "customers",
-      columns: [
-        { name: "customer_id", type: "uuid", description: "Primary key" },
-        { name: "first_name", type: "varchar" },
-        { name: "last_name", type: "varchar" },
-        { name: "email", type: "varchar", description: "Unique" },
-        { name: "created_at", type: "timestamp" },
-      ]
-    },
-    {
-      name: "orders",
-      columns: [
-        { name: "order_id", type: "uuid", description: "Primary key" },
-        { name: "customer_id", type: "uuid", description: "Foreign key to customers" },
-        { name: "order_date", type: "timestamp" },
-        { name: "status", type: "varchar" },
-        { name: "total_amount", type: "decimal" },
-      ]
-    },
-    {
-      name: "products",
-      columns: [
-        { name: "product_id", type: "uuid", description: "Primary key" },
-        { name: "product_name", type: "varchar" },
-        { name: "description", type: "text" },
-        { name: "price", type: "decimal" },
-        { name: "category", type: "varchar" },
-        { name: "inventory_count", type: "integer" },
-      ]
-    },
-    {
-      name: "order_items",
-      columns: [
-        { name: "item_id", type: "uuid", description: "Primary key" },
-        { name: "order_id", type: "uuid", description: "Foreign key to orders" },
-        { name: "product_id", type: "uuid", description: "Foreign key to products" },
-        { name: "quantity", type: "integer" },
-        { name: "unit_price", type: "decimal" },
-      ]
-    }
-  ]
-};
-
-interface AppSchemaSectionProps {
-  onSchemaChange?: (schema: Schema | null) => void;
+interface ExampleQuery {
+  description: string
+  query: string
+  output?: any[]
 }
 
-export function AppSchemaSection({ onSchemaChange }: AppSchemaSectionProps) {
+export function AppSchemaSection({ onSchemaChange }: { onSchemaChange?: (schema: Schema | null) => void }) {
   const { toast } = useToast()
   const [schema, setSchema] = useState<Schema | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
+  const [selectedTable, setSelectedTable] = useState<string | null>(null)
+  const [exampleQueries, setExampleQueries] = useState<ExampleQuery[]>([])
   
   const filteredTables = schema?.tables.filter(table => 
     table.name.toLowerCase().includes(searchTerm.toLowerCase())
   ) || []
-  
-  const handleFileUpload = useCallback(async (file?: File) => {
+
+  const analyzeDatabase = (content: string) => {
     try {
-      if (file) {
-        // Handle actual file upload here
-        const reader = new FileReader()
-        reader.onload = (e) => {
-          try {
-            // Parse the file content and validate schema
-            const newSchema = sampleSchema // Replace with actual schema parsing
-            setSchema(newSchema)
-            onSchemaChange?.(newSchema)
-            toast({
-              title: "Schema Uploaded",
-              description: "Database schema has been successfully loaded.",
-            })
-          } catch (error) {
-            toast({
-              title: "Error",
-              description: "Failed to parse schema file. Please check the format.",
-              variant: "destructive"
+      // This is where we would parse the SQL dump or CSV content
+      // For now, we'll simulate finding tables and relations
+      const tables: Table[] = []
+      const relations: Schema['relations'] = []
+      
+      // Basic SQL parsing (this should be enhanced with a proper SQL parser)
+      const createTableStatements = content.match(/CREATE TABLE [^;]+;/g) || []
+      
+      createTableStatements.forEach(statement => {
+        const tableName = statement.match(/CREATE TABLE (\w+)/)?.[1]
+        if (!tableName) return
+
+        const columns: Column[] = []
+        const columnMatches = statement.matchAll(/(\w+)\s+(\w+)(\s+PRIMARY KEY)?(\s+REFERENCES (\w+)\((\w+)\))?/g)
+        
+        for (const match of columnMatches) {
+          const [_, name, type, isPrimary, _, refTable, refColumn] = match
+          columns.push({
+            name,
+            type,
+            isPrimary: !!isPrimary,
+            isForeign: !!refTable,
+            references: refTable ? { table: refTable, column: refColumn } : undefined
+          })
+
+          if (refTable) {
+            relations.push({
+              from: { table: tableName, column: name },
+              to: { table: refTable, column: refColumn }
             })
           }
         }
-        reader.readAsText(file)
-      } else {
+
+        tables.push({ name: tableName, columns })
+      })
+
+      // Generate example queries based on the schema
+      const queries: ExampleQuery[] = generateExampleQueries(tables, relations)
+
+      return {
+        name: "Uploaded Database",
+        tables,
+        relations,
+        queries
+      }
+    } catch (error) {
+      console.error('Error analyzing database:', error)
+      throw new Error('Failed to analyze database structure')
+    }
+  }
+
+  const generateExampleQueries = (tables: Table[], relations: Schema['relations']): ExampleQuery[] => {
+    const queries: ExampleQuery[] = []
+    
+    // Generate basic SELECT queries for each table
+    tables.forEach(table => {
+      queries.push({
+        description: `Get all ${table.name}`,
+        query: `SELECT * FROM ${table.name} LIMIT 5;`
+      })
+
+      // Generate JOIN queries for related tables
+      const tableRelations = relations.filter(r => r.from.table === table.name)
+      tableRelations.forEach(relation => {
+        queries.push({
+          description: `Get ${table.name} with related ${relation.to.table}`,
+          query: `SELECT 
+  ${table.name}.*,
+  ${relation.to.table}.*
+FROM 
+  ${table.name}
+JOIN 
+  ${relation.to.table} ON ${table.name}.${relation.from.column} = ${relation.to.table}.${relation.to.column}
+LIMIT 5;`
+        })
+      })
+    })
+
+    return queries
+  }
+  
+  const handleFileUpload = useCallback(async (file?: File) => {
+    try {
+      if (!file) {
         toast({
           title: "Schema Upload",
           description: "Please select a file to upload.",
         })
+        return
       }
+
+      const reader = new FileReader()
+      reader.onload = async (e) => {
+        try {
+          const content = e.target?.result as string
+          const analysis = analyzeDatabase(content)
+          
+          setSchema({
+            name: analysis.name,
+            tables: analysis.tables,
+            relations: analysis.relations
+          })
+          
+          setExampleQueries(analysis.queries)
+          
+          onSchemaChange?.({
+            name: analysis.name,
+            tables: analysis.tables,
+            relations: analysis.relations
+          })
+
+          toast({
+            title: "Schema Analyzed",
+            description: `Successfully analyzed database with ${analysis.tables.length} tables and ${analysis.relations.length} relations.`,
+          })
+        } catch (error) {
+          toast({
+            title: "Error",
+            description: "Failed to analyze database schema. Please check the file format.",
+            variant: "destructive"
+          })
+        }
+      }
+      reader.readAsText(file)
     } catch (error) {
       toast({
         title: "Error",
@@ -121,21 +191,13 @@ export function AppSchemaSection({ onSchemaChange }: AppSchemaSectionProps) {
   
   const handleRemoveSchema = useCallback(() => {
     setSchema(null)
+    setExampleQueries([])
     onSchemaChange?.(null)
     toast({
       title: "Schema Removed",
       description: "The current schema has been removed.",
     })
   }, [toast, onSchemaChange])
-
-  const handleUseSampleSchema = useCallback(() => {
-    setSchema(sampleSchema)
-    onSchemaChange?.(sampleSchema)
-    toast({
-      title: "Sample Schema Loaded",
-      description: "Sample e-commerce database schema has been loaded.",
-    })
-  }, [onSchemaChange, toast])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -186,13 +248,20 @@ export function AppSchemaSection({ onSchemaChange }: AppSchemaSectionProps) {
             <TabsList className="self-start">
               <TabsTrigger value="tables">Tables</TabsTrigger>
               <TabsTrigger value="relations">Relations</TabsTrigger>
+              <TabsTrigger value="queries">Example Queries</TabsTrigger>
             </TabsList>
             
             <TabsContent value="tables" className="flex-1 m-0">
               <ScrollArea className="flex-1 h-[calc(100vh-300px)]">
                 <div className="space-y-4">
                   {filteredTables.map((table) => (
-                    <Card key={table.name} className="border-border/50">
+                    <Card 
+                      key={table.name} 
+                      className={`border-border/50 cursor-pointer transition-colors ${
+                        selectedTable === table.name ? 'border-primary' : ''
+                      }`}
+                      onClick={() => setSelectedTable(table.name)}
+                    >
                       <CardHeader className="py-3 px-4">
                         <CardTitle className="text-base flex items-center gap-2">
                           <Database className="h-4 w-4 text-primary" />
@@ -209,9 +278,14 @@ export function AppSchemaSection({ onSchemaChange }: AppSchemaSectionProps) {
                               <div className="font-medium">{column.name}</div>
                               <div className="flex items-center gap-2">
                                 <span className="text-muted-foreground">{column.type}</span>
-                                {column.description && (
+                                {column.isPrimary && (
+                                  <span className="text-xs px-1.5 py-0.5 rounded-full bg-primary/10 text-primary">
+                                    PK
+                                  </span>
+                                )}
+                                {column.isForeign && (
                                   <span className="text-xs px-1.5 py-0.5 rounded-full bg-secondary/10 text-secondary">
-                                    {column.description}
+                                    FK
                                   </span>
                                 )}
                               </div>
@@ -226,22 +300,49 @@ export function AppSchemaSection({ onSchemaChange }: AppSchemaSectionProps) {
             </TabsContent>
             
             <TabsContent value="relations" className="m-0 flex-1">
-              <div className="flex items-center justify-center h-full">
-                <Card className="w-full">
-                  <CardHeader>
-                    <CardTitle className="text-base">Entity Relationship Diagram</CardTitle>
-                    <CardDescription>
-                      Visual representation of database relationships
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="flex items-center justify-center py-8">
-                    <div className="text-center text-muted-foreground">
-                      <Database className="h-12 w-12 mx-auto mb-4 opacity-20" />
-                      <p>ERD visualization would be displayed here</p>
-                    </div>
-                  </CardContent>
-                </Card>
-              </div>
+              <ScrollArea className="h-[calc(100vh-300px)]">
+                <div className="space-y-4">
+                  {schema.relations.map((relation, index) => (
+                    <Card key={index} className="border-border/50">
+                      <CardContent className="p-4">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{relation.from.table}</span>
+                          <span className="text-muted-foreground">→</span>
+                          <span className="font-medium">{relation.to.table}</span>
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-2">
+                          {relation.from.table}.{relation.from.column} references {relation.to.table}.{relation.to.column}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </ScrollArea>
+            </TabsContent>
+
+            <TabsContent value="queries" className="m-0 flex-1">
+              <ScrollArea className="h-[calc(100vh-300px)]">
+                <div className="space-y-6">
+                  {exampleQueries.map((query, index) => (
+                    <Card key={index} className="border-border/50">
+                      <CardHeader className="py-3 px-4">
+                        <CardTitle className="text-base">{query.description}</CardTitle>
+                      </CardHeader>
+                      <CardContent className="px-4 py-2">
+                        <CodeHighlight code={query.query} language="sql" />
+                        {query.output && (
+                          <div className="mt-4">
+                            <h4 className="text-sm font-medium mb-2">Sample Output:</h4>
+                            <pre className="text-xs bg-muted p-2 rounded">
+                              {JSON.stringify(query.output, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </ScrollArea>
             </TabsContent>
           </Tabs>
         </div>
@@ -251,7 +352,7 @@ export function AppSchemaSection({ onSchemaChange }: AppSchemaSectionProps) {
             <CardHeader>
               <CardTitle className="text-lg">Upload Schema</CardTitle>
               <CardDescription>
-                Upload your database schema to generate better queries
+                Upload your database schema to analyze structure and generate queries
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -294,11 +395,6 @@ export function AppSchemaSection({ onSchemaChange }: AppSchemaSectionProps) {
                 >
                   <FolderOpen className="mr-2 h-4 w-4" />
                   Browse Files
-                </Button>
-                
-                <Button variant="ghost" className="w-full" onClick={handleUseSampleSchema}>
-                  <PlusCircle className="mr-2 h-4 w-4" />
-                  Use Sample Schema
                 </Button>
               </div>
             </CardContent>
