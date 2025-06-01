@@ -5,10 +5,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Upload, Database, PlusCircle, RefreshCcw, FolderOpen, List, X } from "lucide-react"
+import { Upload, Database, PlusCircle, RefreshCcw, FolderOpen, List, X, Play } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { useToast } from "@/hooks/use-toast"
 import { CodeHighlight } from "@/components/ui/code-highlight"
+import { nlToSql } from "@/lib/nl-to-sql"
+import { format } from "sql-formatter"
 
 interface Column {
   name: string
@@ -49,10 +51,64 @@ export function AppSchemaSection({ onSchemaChange }: { onSchemaChange?: (schema:
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedTable, setSelectedTable] = useState<string | null>(null)
   const [exampleQueries, setExampleQueries] = useState<ExampleQuery[]>([])
+  const [naturalLanguageQuery, setNaturalLanguageQuery] = useState('')
+  const [generatedQuery, setGeneratedQuery] = useState('')
+  const [isGenerating, setIsGenerating] = useState(false)
   
   const filteredTables = schema?.tables.filter(table => 
     table.name.toLowerCase().includes(searchTerm.toLowerCase())
   ) || []
+
+  const generateSchemaString = (schema: Schema): string => {
+    return schema.tables.map(table => {
+      const columns = table.columns.map(col => {
+        let colDef = `${col.name} ${col.type}`
+        if (col.isPrimary) colDef += ' PRIMARY KEY'
+        if (col.isForeign && col.references) {
+          colDef += ` REFERENCES ${col.references.table}(${col.references.column})`
+        }
+        return colDef
+      }).join(',\n  ')
+
+      return `CREATE TABLE ${table.name} (\n  ${columns}\n);`
+    }).join('\n\n')
+  }
+
+  const handleGenerateQuery = async () => {
+    if (!schema || !naturalLanguageQuery.trim()) {
+      toast({
+        title: "Error",
+        description: "Please provide both a schema and a query.",
+        variant: "destructive"
+      })
+      return
+    }
+
+    setIsGenerating(true)
+    try {
+      const schemaString = generateSchemaString(schema)
+      const result = await nlToSql(naturalLanguageQuery, schemaString)
+      
+      setGeneratedQuery(format(result.sqlQuery, {
+        language: 'sqlite',
+        uppercase: true,
+        linesBetweenQueries: 2
+      }))
+
+      toast({
+        title: "Query Generated",
+        description: "SQL query has been generated successfully."
+      })
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to generate SQL query. Please try again.",
+        variant: "destructive"
+      })
+    } finally {
+      setIsGenerating(false)
+    }
+  }
 
   const analyzeDatabase = (content: string) => {
     try {
@@ -234,7 +290,38 @@ LIMIT 5;`
 
       {schema ? (
         <div className="flex-1 flex flex-col">
-          <div className="mb-4 relative">
+          <div className="mb-4">
+            <div className="relative mb-4">
+              <Input
+                placeholder="Enter your question in natural language..."
+                value={naturalLanguageQuery}
+                onChange={(e) => setNaturalLanguageQuery(e.target.value)}
+                className="pr-24"
+              />
+              <Button 
+                size="sm"
+                className="absolute right-1 top-1"
+                onClick={handleGenerateQuery}
+                disabled={isGenerating || !naturalLanguageQuery.trim()}
+              >
+                <Play className="h-4 w-4 mr-1" />
+                Generate
+              </Button>
+            </div>
+
+            {generatedQuery && (
+              <Card className="mb-4">
+                <CardHeader>
+                  <CardTitle className="text-base">Generated SQL Query</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <CodeHighlight code={generatedQuery} language="sql" />
+                </CardContent>
+              </Card>
+            )}
+          </div>
+
+          <div className="relative mb-4">
             <Input
               placeholder="Search tables..."
               value={searchTerm}
