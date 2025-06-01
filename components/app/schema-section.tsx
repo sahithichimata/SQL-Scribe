@@ -128,7 +128,7 @@ export function AppSchemaSection({ onSchemaChange }: { onSchemaChange?: (schema:
         const columnMatches = statement.matchAll(/(\w+)\s+(\w+)(\s+PRIMARY KEY)?(\s+REFERENCES (\w+)\((\w+)\))?/g)
         
         for (const match of columnMatches) {
-          const [_, name, type, isPrimary, _, refTable, refColumn] = match
+          const [_, name, type, isPrimary, unused, refTable, refColumn] = match
           columns.push({
             name,
             type,
